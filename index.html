@@ -8,6 +8,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!-- Markdown rendering & sanitisation -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <style>
     /* ─── Design Tokens ─────────────────────────────────────────────────── */
     :root {
@@ -339,6 +342,34 @@
 
     .bubble.bot code  { background: #0b0d14; color: var(--accent-light); }
     .bubble.user code { background: #ffffff22; }
+
+    /* Code blocks inside bot bubbles */
+    .bubble.bot pre {
+      background: #0b0d14;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      margin: 8px 0;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .bubble.bot pre code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8em;
+      color: var(--accent-light);
+      background: transparent;
+      padding: 0;
+      border-radius: 0;
+      white-space: pre;
+    }
+
+    /* Markdown prose inside bot bubbles */
+    .bubble.bot p  { margin: 4px 0; }
+    .bubble.bot ul,
+    .bubble.bot ol { padding-left: 20px; margin: 4px 0; }
+    .bubble.bot li { margin: 2px 0; }
+    .bubble.bot strong { color: var(--text-primary); }
 
     /* ─── Typing Indicator ──────────────────────────────────────────────── */
     #typing-indicator {
@@ -713,7 +744,14 @@
 
       const bubble = document.createElement('div');
       bubble.className = `bubble ${role}`;
-      bubble.innerHTML = formatText(text);
+
+      if (role === 'bot') {
+        // Render markdown, then sanitise before inserting into the DOM
+        bubble.innerHTML = renderMarkdown(text);
+      } else {
+        // User messages stay as plain text — escape then render line-breaks only
+        bubble.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+      }
 
       row.appendChild(avatar);
       row.appendChild(bubble);
@@ -762,12 +800,27 @@
     }
 
     // ─── Text Formatting ─────────────────────────────────────────────────
-    // Minimal markdown-like rendering: **bold**, `code`, line breaks
-    function formatText(text) {
-      return escapeHtml(text)
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/\n/g, '<br>');
+    // Configure marked: GFM + soft line-breaks; force synchronous output
+    // (marked v6+ made parse() async by default; async:false restores the
+    // synchronous string return value needed for innerHTML assignment)
+    marked.use({
+      gfm: true,
+      breaks: true,     // single newline → <br>
+      async: false,     // CRITICAL: return a string, not a Promise
+    });
+
+    /**
+     * Render bot reply markdown → sanitised HTML string.
+     * Falls back to escaped plain text if either library is unavailable.
+     */
+    function renderMarkdown(text) {
+      try {
+        const raw = marked.parse(text);           // string, not Promise
+        return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+      } catch (e) {
+        // Library failed to load or threw — degrade gracefully
+        return escapeHtml(text).replace(/\n/g, '<br>');
+      }
     }
 
     function escapeHtml(str) {
